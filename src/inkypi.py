@@ -112,6 +112,7 @@ if __name__ == '__main__':
             except:
                 pass  # Ignore if we can't get the IP
 
-        serve(app, host="0.0.0.0", port=PORT, threads=1)
+        # Use a small thread pool so one slow request does not block the entire UI on low-resource Pi devices.
+        serve(app, host="0.0.0.0", port=PORT, threads=4)
     finally:
         refresh_task.stop()

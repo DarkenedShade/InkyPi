@@ -7,6 +7,7 @@ import hashlib
 import tempfile
 import subprocess
 import shutil
+import signal
 
 logger = logging.getLogger(__name__)
 
@@ -118,6 +119,7 @@ def _find_chromium_binary():
 
 def take_screenshot(target, dimensions, timeout_ms=None):
     image = None
+    img_file_path = None
     try:
         # Find available browser binary
         browser = _find_chromium_binary()
@@ -152,22 +154,46 @@ def take_screenshot(target, dimensions, timeout_ms=None):
         ]
         if timeout_ms:
             command.append(f"--timeout={timeout_ms}")
-        result = subprocess.run(command, capture_output=True, check=False)
+
+        # Default hard timeout to avoid indefinitely blocked Chromium calls.
+        timeout_s = max(float(timeout_ms) / 1000.0, 1.0) if timeout_ms is not None else 45.0
+
+        process = subprocess.Popen(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            start_new_session=True,
+        )
+        try:
+            stdout, stderr = process.communicate(timeout=timeout_s)
+        except subprocess.TimeoutExpired:
+            logger.error(f"Screenshot command timed out after {timeout_s:.1f}s; terminating browser process tree")
+            if os.name == "posix":
+                os.killpg(process.pid, signal.SIGKILL)
+            else:
+                process.kill()
+            stdout, stderr = process.communicate()
+
+        returncode = process.returncode
 
         # Check if the process failed or the output file is missing
-        if result.returncode != 0 or not os.path.exists(img_file_path):
-            logger.error(f"Failed to take screenshot (return code: {result.returncode})")
+        if returncode != 0 or not os.path.exists(img_file_path):
+            stderr_text = stderr.decode("utf-8", errors="replace").strip() if stderr else ""
+            if stderr_text:
+                logger.error(f"Failed to take screenshot (return code: {returncode}): {stderr_text}")
+            else:
+                logger.error(f"Failed to take screenshot (return code: {returncode})")
             return None
 
         # Load the image using PIL
         with Image.open(img_file_path) as img:
             image = img.copy()
 
-        # Remove image files
-        os.remove(img_file_path)
-
     except Exception as e:
         logger.error(f"Failed to take screenshot: {str(e)}")
+    finally:
+        if img_file_path and os.path.exists(img_file_path):
+            os.remove(img_file_path)
 
     return image
 
