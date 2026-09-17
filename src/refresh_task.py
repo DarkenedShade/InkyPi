@@ -2,6 +2,7 @@ import threading
 import time
 import os
 import logging
+from collections import deque
 import psutil
 import pytz
 from datetime import datetime, timezone
@@ -23,11 +24,7 @@ class RefreshTask:
         self.lock = threading.Lock()
         self.condition = threading.Condition(self.lock)
         self.running = False
-        self.manual_update_request = ()
-
-        self.refresh_event = threading.Event()
-        self.refresh_event.set()
-        self.refresh_result = {}
+        self.manual_update_requests = deque()
 
     def start(self):
         """Starts the background thread for refreshing the display."""
@@ -64,21 +61,20 @@ class RefreshTask:
         5. Updates the refresh metadata in the device configuration.
         6. Repeats the process until `stop()` is called.
 
-        Handles any exceptions that occur during the refresh process and ensures the refresh event is set 
-        to indicate completion.
+        Handles any exceptions that occur during the refresh process and reports errors back to the
+        manual update request that triggered them.
 
         Exceptions:
         - Captures and logs any unexpected errors during execution to prevent the thread from exiting.
         """
         while True:
+            manual_request = None
             try:
                 with self.condition:
                     sleep_time = self.device_config.get_config("plugin_cycle_interval_seconds", default=60*60)
 
                     # Wait for sleep_time or until notified
                     self.condition.wait(timeout=sleep_time)
-                    self.refresh_result = {}
-                    self.refresh_event.clear()
 
                     # Exit if `stop()` is called
                     if not self.running:
@@ -89,11 +85,11 @@ class RefreshTask:
                     current_dt = self._get_current_datetime()
 
                     refresh_action = None
-                    if self.manual_update_request:
+                    if self.manual_update_requests:
                         # handle immediate update request
                         logger.info("Manual update requested")
-                        refresh_action = self.manual_update_request
-                        self.manual_update_request = ()
+                        manual_request = self.manual_update_requests.popleft()
+                        refresh_action = manual_request["refresh_action"]
                     else:
 
                         if self.device_config.get_config("log_system_stats"):
@@ -111,16 +107,16 @@ class RefreshTask:
                             logger.error(f"Plugin config not found for '{refresh_action.get_plugin_id()}'.")
                             continue
                         plugin = get_plugin_instance(plugin_config)
-                            execute_start_s = time.perf_counter()
+                        execute_start_s = time.perf_counter()
                         image = refresh_action.execute(plugin, self.device_config, current_dt)
-                            logger.info(
-                                f"Refresh action execute completed. | plugin_id: {refresh_action.get_plugin_id()} | elapsed_s: {time.perf_counter() - execute_start_s:.3f}"
-                            )
-                            hash_start_s = time.perf_counter()
+                        logger.info(
+                            f"Refresh action execute completed. | plugin_id: {refresh_action.get_plugin_id()} | elapsed_s: {time.perf_counter() - execute_start_s:.3f}"
+                        )
+                        hash_start_s = time.perf_counter()
                         image_hash = compute_image_hash(image)
-                            logger.info(
-                                f"Image hash computed. | plugin_id: {refresh_action.get_plugin_id()} | elapsed_s: {time.perf_counter() - hash_start_s:.3f}"
-                            )
+                        logger.info(
+                            f"Image hash computed. | plugin_id: {refresh_action.get_plugin_id()} | elapsed_s: {time.perf_counter() - hash_start_s:.3f}"
+                        )
 
                         refresh_info = refresh_action.get_refresh_info()
                         refresh_info.update({"refresh_time": current_dt.isoformat(), "image_hash": image_hash})
@@ -137,23 +133,29 @@ class RefreshTask:
 
             except Exception as e:
                 logger.exception('Exception during refresh')
-                self.refresh_result["exception"] = e  # Capture exception
+                if manual_request:
+                    manual_request["result"]["exception"] = e
             finally:
-                self.refresh_event.set()
+                if manual_request:
+                    manual_request["event"].set()
 
     def manual_update(self, refresh_action):
         """Manually triggers an update for the specified plugin id and plugin settings by notifying the background process."""
         if self.running:
+            manual_request = {
+                "refresh_action": refresh_action,
+                "event": threading.Event(),
+                "result": {}
+            }
+
             with self.condition:
-                self.manual_update_request = refresh_action
-                self.refresh_result = {}
-                self.refresh_event.clear()
+                self.manual_update_requests.append(manual_request)
 
                 self.condition.notify_all()  # Wake the thread to process manual update
 
-            self.refresh_event.wait()
-            if self.refresh_result.get("exception"):
-                raise self.refresh_result.get("exception")
+            manual_request["event"].wait()
+            if manual_request["result"].get("exception"):
+                raise manual_request["result"].get("exception")
         else:
             logger.warning("Background refresh task is not running, unable to do a manual update")
 

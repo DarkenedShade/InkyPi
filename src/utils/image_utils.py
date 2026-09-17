@@ -182,7 +182,13 @@ def take_screenshot(target, dimensions, timeout_ms=None):
         except subprocess.TimeoutExpired:
             logger.error(f"Screenshot command timed out after {timeout_s:.1f}s; terminating browser process tree")
             if os.name == "posix":
-                os.killpg(process.pid, signal.SIGKILL)
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except Exception as killpg_error:
+                    logger.warning(
+                        f"killpg failed during screenshot timeout cleanup ({killpg_error}); falling back to process.kill()"
+                    )
+                    process.kill()
             else:
                 process.kill()
             stdout, stderr = process.communicate()
@@ -208,7 +214,10 @@ def take_screenshot(target, dimensions, timeout_ms=None):
         logger.error(f"Failed to take screenshot: {str(e)}")
     finally:
         if img_file_path and os.path.exists(img_file_path):
-            os.remove(img_file_path)
+            try:
+                os.remove(img_file_path)
+            except OSError as remove_error:
+                logger.warning(f"Failed to remove temporary screenshot file {img_file_path}: {remove_error}")
         logger.info(f"take_screenshot completed. | elapsed_s: {time.perf_counter() - start_s:.3f}")
 
     return image
