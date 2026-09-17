@@ -7,6 +7,7 @@ from jinja2 import Environment, FileSystemLoader, select_autoescape
 from pathlib import Path
 import asyncio
 import base64
+import time
 
 logger = logging.getLogger(__name__)
 
@@ -85,6 +86,7 @@ class BasePlugin:
         return template_params
 
     def render_image(self, dimensions, html_file, css_file=None, template_params={}):
+        render_start_s = time.perf_counter()
         # load the base plugin and current plugin css files
         css_files = [os.path.join(BASE_PLUGIN_RENDER_DIR, "plugin.css")]
         if css_file:
@@ -98,7 +100,19 @@ class BasePlugin:
         template_params["static_dir"] = STATIC_DIR
 
         # load and render the given html template
+        template_start_s = time.perf_counter()
         template = self.env.get_template(html_file)
         rendered_html = template.render(template_params)
+        logger.info(
+            f"Template render completed. | plugin_id: {self.get_plugin_id()} | html: {html_file} | elapsed_s: {time.perf_counter() - template_start_s:.3f}"
+        )
 
-        return take_screenshot_html(rendered_html, dimensions)
+        screenshot_start_s = time.perf_counter()
+        image = take_screenshot_html(rendered_html, dimensions)
+        logger.info(
+            f"Screenshot stage completed. | plugin_id: {self.get_plugin_id()} | html: {html_file} | elapsed_s: {time.perf_counter() - screenshot_start_s:.3f}"
+        )
+        logger.info(
+            f"Plugin render_image completed. | plugin_id: {self.get_plugin_id()} | html: {html_file} | elapsed_s: {time.perf_counter() - render_start_s:.3f}"
+        )
+        return image

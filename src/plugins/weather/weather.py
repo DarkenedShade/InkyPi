@@ -8,6 +8,7 @@ from astral import moon
 import pytz
 from io import BytesIO
 import math
+import time
 
 logger = logging.getLogger(__name__)
         
@@ -72,6 +73,7 @@ class Weather(BasePlugin):
         return template_params
 
     def generate_image(self, settings, device_config):
+        start_s = time.perf_counter()
         raw_lat = settings.get('latitude', '').strip()
         raw_long = settings.get('longitude', '').strip()
         if not raw_lat or not raw_long:
@@ -94,6 +96,7 @@ class Weather(BasePlugin):
         tz = pytz.timezone(timezone)
 
         try:
+            provider_start_s = time.perf_counter()
             if weather_provider == "OpenWeatherMap":
                 api_key = device_config.load_env_key("OPEN_WEATHER_MAP_SECRET")
                 if not api_key:
@@ -116,6 +119,7 @@ class Weather(BasePlugin):
                 template_params = self.parse_open_meteo_data(weather_data, aqi_data, tz, units, time_format, lat)
             else:
                 raise RuntimeError(f"Unknown weather provider: {weather_provider}")
+            logger.info(f"Weather provider data stage completed. | provider: {weather_provider} | elapsed_s: {time.perf_counter() - provider_start_s:.3f}")
 
             template_params['title'] = title
         except Exception as e:
@@ -136,10 +140,13 @@ class Weather(BasePlugin):
             last_refresh_time = now.strftime("%Y-%m-%d %I:%M %p")
         template_params["last_refresh_time"] = last_refresh_time
 
+        render_start_s = time.perf_counter()
         image = self.render_image(dimensions, "weather.html", "weather.css", template_params)
+        logger.info(f"Weather render stage completed. | provider: {weather_provider} | elapsed_s: {time.perf_counter() - render_start_s:.3f}")
 
         if not image:
             raise RuntimeError("Failed to take screenshot, please check logs.")
+        logger.info(f"Weather generate_image completed. | provider: {weather_provider} | elapsed_s: {time.perf_counter() - start_s:.3f}")
         return image
 
     def parse_weather_data(self, weather_data, aqi_data, tz, units, time_format, lat):
@@ -724,7 +731,9 @@ class Weather(BasePlugin):
 
     def get_weather_data(self, api_key, units, lat, long):
         url = WEATHER_URL.format(lat=lat, long=long, units=units, api_key=api_key)
+        start_s = time.perf_counter()
         response = requests.get(url, timeout=30)
+        logger.info(f"Weather API response received. | endpoint: onecall | status: {response.status_code} | elapsed_s: {time.perf_counter() - start_s:.3f}")
         if not 200 <= response.status_code < 300:
             logger.error(f"Failed to retrieve weather data: {response.content}")
             raise RuntimeError("Failed to retrieve weather data.")
@@ -733,7 +742,9 @@ class Weather(BasePlugin):
 
     def get_air_quality(self, api_key, lat, long):
         url = AIR_QUALITY_URL.format(lat=lat, long=long, api_key=api_key)
+        start_s = time.perf_counter()
         response = requests.get(url, timeout=30)
+        logger.info(f"Weather API response received. | endpoint: air_quality | status: {response.status_code} | elapsed_s: {time.perf_counter() - start_s:.3f}")
 
         if not 200 <= response.status_code < 300:
             logger.error(f"Failed to get air quality data: {response.content}")
@@ -743,7 +754,9 @@ class Weather(BasePlugin):
 
     def get_location(self, api_key, lat, long):
         url = GEOCODING_URL.format(lat=lat, long=long, api_key=api_key)
+        start_s = time.perf_counter()
         response = requests.get(url, timeout=30)
+        logger.info(f"Weather API response received. | endpoint: geocoding | status: {response.status_code} | elapsed_s: {time.perf_counter() - start_s:.3f}")
 
         if not 200 <= response.status_code < 300:
             logger.error(f"Failed to get location: {response.content}")
@@ -757,7 +770,9 @@ class Weather(BasePlugin):
     def get_open_meteo_data(self, lat, long, units, forecast_days):
         unit_params = OPEN_METEO_UNIT_PARAMS[units]
         url = OPEN_METEO_FORECAST_URL.format(lat=lat, long=long, forecast_days=forecast_days) + f"&{unit_params}"
+        start_s = time.perf_counter()
         response = requests.get(url, timeout=30)
+        logger.info(f"Weather API response received. | endpoint: open_meteo_forecast | status: {response.status_code} | elapsed_s: {time.perf_counter() - start_s:.3f}")
 
         if not 200 <= response.status_code < 300:
             logger.error(f"Failed to retrieve Open-Meteo weather data: {response.content}")
@@ -767,7 +782,9 @@ class Weather(BasePlugin):
 
     def get_open_meteo_air_quality(self, lat, long):
         url = OPEN_METEO_AIR_QUALITY_URL.format(lat=lat, long=long)
+        start_s = time.perf_counter()
         response = requests.get(url, timeout=30)
+        logger.info(f"Weather API response received. | endpoint: open_meteo_air_quality | status: {response.status_code} | elapsed_s: {time.perf_counter() - start_s:.3f}")
         if not 200 <= response.status_code < 300:
             logger.error(f"Failed to retrieve Open-Meteo air quality data: {response.content}")
             raise RuntimeError("Failed to retrieve Open-Meteo air quality data.")
